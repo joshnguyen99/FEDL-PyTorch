@@ -1,5 +1,4 @@
 import torch
-import torch.optim as optim
 import torch.nn as nn
 import torch.nn.functional as F
 import os
@@ -7,14 +6,14 @@ import json
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from FedModel import Net
-from FedOptimizer import MySGD
+from FedOptimizer import MySGD, FEDLOptimizer
 
 IMAGE_SIZE = 28
 IMAGE_PIXELS = IMAGE_SIZE * IMAGE_SIZE
 NUM_CHANNELS = 1
 
 
-class User:
+class UserAVG:
     def __init__(self, numeric_id, dataset, model, batch_size, learning_rate,
                  local_epochs, optimizer):
         self.id = "f_%05d" % numeric_id
@@ -37,13 +36,12 @@ class User:
 
         if optimizer == "SGD":
             self.optimizer = MySGD(self.model.parameters(), lr=0.01)
-            # self.optimizer = optim.SGD(self.model.parameters(), lr=self.learning_rate)
         self.trainloader = DataLoader(self.train_data, self.batch_size)
         self.testloader = DataLoader(self.test_data, self.test_samples)
 
     def get_data(self, id="", dataset="mnist"):
-        train_path = os.path.join("datafed", dataset, "userstrain", id + ".json")
-        test_path = os.path.join("datafed", dataset, "userstest", id + ".json")
+        train_path = os.path.join("datafed", self.dataset, "userstrain", id + ".json")
+        test_path = os.path.join("datafed", self.dataset, "userstest", id + ".json")
         if not os.path.exists(train_path) or not os.path.exists(test_path):
             raise FileNotFoundError("User not detected.")
 
@@ -91,7 +89,6 @@ class User:
                 model_grad.data = new_grads[idx]
 
     def train(self, epochs):
-        # model, trainloader, optimizer, epochs, trainloader2, testloader
         LOSS = []
         self.model.train()
         for epoch in tqdm(range(1, self.local_epochs + 1), desc="Local Epoch"):
@@ -104,11 +101,6 @@ class User:
                 loss.backward()
                 self.optimizer.step()
                 LOSS.append(loss.item())
-                # print("Epoch", str(epoch), ": Loss: " + str(loss.item()))
-                # for param in self.model.parameters():
-                #     print(param)
-        # print(LOSS)
-        # self.save_model()
         return LOSS
 
     def test(self):
@@ -134,3 +126,59 @@ class User:
     def model_exists():
         # return os.path.exists(os.path.join("models", "user_" + self.id + ".pt"))
         return os.path.exists(os.path.join("models", "server" + ".pt"))
+
+
+class UserFEDL(UserAVG):
+    def __init__(self, numeric_id, dataset, model, batch_size, learning_rate, local_epochs, optimizer):
+        super().__init__(numeric_id, dataset, model, batch_size, learning_rate, local_epochs, optimizer)
+        if model == "cnn":
+            if self.model_exists():
+                self.load_model()
+            else:
+                self.model = Net()
+        self.loss = nn.NLLLoss()
+
+        self.pre_grads, self.server_grads = None, None
+
+        self.optimizer = FEDLOptimizer(self.model.parameters(),
+                                       lr=self.learning_rate,
+                                       server_grads=self.server_grads,
+                                       pre_grads=self.pre_grads)
+        self.save_previous_grads()
+
+    def set_parameters(self, new_params):
+        for old_param, new_param in zip(self.model.parameters(), new_params):
+            old_param = new_param.clone().requires_grad_(True)
+        self.optimizer = FEDLOptimizer(self.model.parameters(),
+                                       lr=self.learning_rate,
+                                       server_grads=self.server_grads,
+                                       pre_grads=self.pre_grads)
+
+    def train(self, epochs):
+        LOSS = []
+        self.save_previous_grads()
+        self.model.train()
+        for epoch in tqdm(range(1, self.local_epochs + 1), desc="Local Epoch"):
+            self.model.train()
+            for batch_idx, (X, y) in enumerate(self.trainloader):
+                self.optimizer.zero_grad()
+                output = self.model(X)
+                loss = F.nll_loss(output, y)
+                loss.backward()
+                self.optimizer.step()
+                LOSS.append(loss.item())
+        return LOSS
+
+    def save_previous_grads(self):
+        pre_grads = []
+        for param in self.model.parameters():
+            if param.grad is not None:
+                pre_grads.append(param.grad)
+            else:
+                pre_grads.append(torch.zeros_like(param.data))
+        self.pre_grads = pre_grads
+        self.optimizer.pre_grads = pre_grads
+
+    def save_server_grads(self, server_grads):
+        self.server_grads = server_grads
+        self.server_grads = server_grads
