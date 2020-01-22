@@ -153,8 +153,9 @@ class ServerFEDL(Server):
 
     def add_grad(self, user, ratio):
         user_grad = user.get_grads()
-        for idx, param in enumerate(self.model.parameter()):
-            param.grad.data = param.grad.data + user_grad[idx].clone() * ratio
+        for idx, param in enumerate(self.model.parameters()):
+            if param.grad is not None:
+                param.grad.data = param.grad.data + user_grad[idx].clone() * ratio
 
     def add_parameters(self, user, ratio):
         for server_param, user_param in zip(self.model.parameters(), user.get_parameters()):
