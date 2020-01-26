@@ -4,8 +4,7 @@ import torch.nn.functional as F
 import os
 import json
 from torch.utils.data import DataLoader
-from tqdm import tqdm
-from FedModel import Net
+from FedModel import Net, MCLR
 from FedOptimizer import MySGD, FEDLOptimizer
 
 IMAGE_SIZE = 28
@@ -13,29 +12,26 @@ IMAGE_PIXELS = IMAGE_SIZE * IMAGE_SIZE
 NUM_CHANNELS = 1
 
 
-class UserAVG:
+class User:
+    """
+    Base class for users in federated learning.
+    """
     def __init__(self, numeric_id, dataset, model, batch_size, learning_rate,
                  local_epochs, optimizer):
+        # Set up the main attributes
         self.id = "f_%05d" % numeric_id
         self.learning_rate = learning_rate
         self.batch_size = batch_size
         self.dataset = dataset
         self.local_epochs = local_epochs
-
-        X_train, y_train, X_test, y_test, self.train_samples, self.test_samples = \
-            self.get_data(self.id, dataset)
-        self.train_data = [(x, y) for x, y in zip(X_train, y_train)]
-        self.test_data = [(x, y) for x, y in zip(X_test, y_test)]
-
-        if model == "cnn":
-            if self.model_exists():
-                self.load_model()
-            else:
-                self.model = Net()
         self.loss = nn.NLLLoss()
+        self.model = MCLR()
 
-        if optimizer == "SGD":
-            self.optimizer = MySGD(self.model.parameters(), lr=0.01)
+        # Get the dataset and divide it in batches
+        self.X_train, self.y_train, self.X_test, self.y_test, self.train_samples, self.test_samples = \
+            self.get_data(self.id, dataset)
+        self.train_data = [(x, y) for x, y in zip(self.X_train, self.y_train)]
+        self.test_data = [(x, y) for x, y in zip(self.X_test, self.y_test)]
         self.trainloader = DataLoader(self.train_data, self.batch_size)
         self.testloader = DataLoader(self.test_data, self.test_samples)
 
@@ -65,12 +61,6 @@ class UserAVG:
             param.detach()
         return self.model.parameters()
 
-    def set_parameters(self, new_params):
-        for old_param, new_param in zip(self.model.parameters(), new_params):
-            old_param = new_param.clone().requires_grad_(True)
-        # self.optimizer = optim.SGD(self.model.parameters(), lr=self.learning_rate)
-        self.optimizer = MySGD(self.model.parameters(), lr=0.01)
-
     def get_grads(self):
         grads = []
         for param in self.model.parameters():
@@ -80,34 +70,14 @@ class UserAVG:
                 grads.append(param.grad.data)
         return grads
 
-    def set_grads(self, new_grads):
-        if isinstance(new_grads, nn.Parameter):
-            for model_grad, new_grad in zip(self.model.parameters(), new_grads):
-                model_grad.data = new_grad.data
-        elif isinstance(new_grads, list):
-            for idx, model_grad in enumerate(self.model.parameters()):
-                model_grad.data = new_grads[idx]
-
-    def train(self, epochs):
-        LOSS = []
-        self.model.train()
-        for epoch in tqdm(range(1, self.local_epochs + 1), desc="Local Epoch"):
-            self.model.train()
-            for batch_idx, (X, y) in enumerate(self.trainloader):
-                self.optimizer.zero_grad()
-                output = self.model(X)
-                # print(torch.sum(torch.argmax(output, dim=1) == y) * 1. / y.shape[0])
-                loss = F.nll_loss(output, y)
-                loss.backward()
-                self.optimizer.step()
-                LOSS.append(loss.item())
-        return LOSS
-
     def test(self):
         self.model.eval()
+        test_acc = 0
         for x, y in self.testloader:
             output = self.model(x)
-            print(self.id + ", Accuracy:", torch.sum(torch.argmax(output, dim=1) == y) * 1. / y.shape[0])
+            test_acc += (torch.sum(torch.argmax(output, dim=1) == y) * 1. / y.shape[0]).item()
+            print(self.id + ", Accuracy:", test_acc)
+        return test_acc / self.batch_size
 
     def save_model(self):
         model_path = os.path.join("models", self.dataset)
@@ -121,22 +91,59 @@ class UserAVG:
         model_path = os.path.join("models", self.dataset)
         self.model = torch.load(os.path.join(model_path, "server" + ".pt"))
 
-
     @staticmethod
     def model_exists():
         # return os.path.exists(os.path.join("models", "user_" + self.id + ".pt"))
         return os.path.exists(os.path.join("models", "server" + ".pt"))
 
 
-class UserFEDL(UserAVG):
-    def __init__(self, numeric_id, dataset, model, batch_size, learning_rate, local_epochs, optimizer):
-        super().__init__(numeric_id, dataset, model, batch_size, learning_rate, local_epochs, optimizer)
-        if model == "cnn":
-            if self.model_exists():
-                self.load_model()
-            else:
-                self.model = Net()
-        self.loss = nn.NLLLoss()
+class UserAVG(User):
+    """
+    User in FedAvg.
+    """
+    def __init__(self, numeric_id, dataset, model, batch_size, learning_rate,
+                 local_epochs, optimizer):
+        super().__init__(numeric_id, dataset, model, batch_size, learning_rate,
+                         local_epochs, optimizer)
+
+        if optimizer == "SGD":
+            self.optimizer = MySGD(self.model.parameters(), lr=0.01)
+
+    def set_parameters(self, model):
+        for old_param, new_param in zip(self.model.parameters(), model.parameters()):
+            old_param = new_param.clone().requires_grad_(True)
+        # self.optimizer = optim.SGD(self.model.parameters(), lr=self.learning_rate)
+        self.optimizer = MySGD(self.model.parameters(), lr=0.01)
+
+    def set_grads(self, new_grads):
+        if isinstance(new_grads, nn.Parameter):
+            for model_grad, new_grad in zip(self.model.parameters(), new_grads):
+                model_grad.data = new_grad.data
+        elif isinstance(new_grads, list):
+            for idx, model_grad in enumerate(self.model.parameters()):
+                model_grad.data = new_grads[idx]
+
+    def train(self, epochs):
+        LOSS = 0
+        self.model.train()
+        for epoch in range(1, self.local_epochs + 1):
+            self.model.train()
+            for batch_idx, (X, y) in enumerate(self.trainloader):
+                self.optimizer.zero_grad()
+                output = self.model(X)
+                # print(torch.sum(torch.argmax(output, dim=1) == y) * 1. / y.shape[0])
+                loss = F.nll_loss(output, y)
+                loss.backward()
+                self.optimizer.step()
+                LOSS += loss.item() / self.batch_size
+        return LOSS / self.local_epochs
+
+
+class UserFEDL(User):
+    def __init__(self, numeric_id, dataset, model, batch_size, learning_rate,
+                 local_epochs, optimizer):
+        super().__init__(numeric_id, dataset, model, batch_size, learning_rate,
+                         local_epochs, optimizer)
 
         self.pre_grads, self.server_grads = None, None
 
@@ -144,36 +151,42 @@ class UserFEDL(UserAVG):
                                        lr=self.learning_rate,
                                        server_grads=self.server_grads,
                                        pre_grads=self.pre_grads)
+        self.optimizer.zero_grad()
+        loss = F.nll_loss(self.model(self.X_train), self.y_train)
+        loss.backward()
+
+        self.server_model = MCLR()
+        # self.server_loss = F.nll_loss(self.server_model(self.X_train), self.y_train)
+        # self.server_loss.backward()
+
         self.save_previous_grads()
 
-    def set_parameters(self, new_params):
-        for old_param, new_param in zip(self.model.parameters(), new_params):
-            old_param = new_param.clone().requires_grad_(True)
-        self.optimizer = FEDLOptimizer(self.model.parameters(),
-                                       lr=self.learning_rate,
-                                       server_grads=self.server_grads,
-                                       pre_grads=self.pre_grads)
+    def set_parameters(self, model):
+        for old_param, new_param in zip(self.server_model.parameters(), model.parameters()):
+            old_param.data = new_param.data.clone()
+        output = self.server_model(self.X_train)
+        server_loss = F.nll_loss(output, self.y_train)
+        server_loss.backward()
+        self.save_previous_grads()
 
     def train(self, epochs):
-        LOSS = []
-        self.save_previous_grads()
+        LOSS = 0
         self.model.train()
-        for epoch in tqdm(range(1, self.local_epochs + 1), desc="Local Epoch"):
-            self.model.train()
+        for epoch in range(self.local_epochs):
             for batch_idx, (X, y) in enumerate(self.trainloader):
                 self.optimizer.zero_grad()
                 output = self.model(X)
                 loss = F.nll_loss(output, y)
+                LOSS += loss.item()
                 loss.backward()
                 self.optimizer.step()
-                LOSS.append(loss.item())
-        return LOSS
+        return LOSS / self.train_samples
 
     def save_previous_grads(self):
         pre_grads = []
-        for param in self.model.parameters():
+        for param in self.server_model.parameters():
             if param.grad is not None:
-                pre_grads.append(param.grad)
+                pre_grads.append(param.grad.data.clone())
             else:
                 pre_grads.append(torch.zeros_like(param.data))
         self.pre_grads = pre_grads
@@ -181,4 +194,4 @@ class UserFEDL(UserAVG):
 
     def save_server_grads(self, server_grads):
         self.server_grads = server_grads
-        self.server_grads = server_grads
+        self.optimizer.server_grads = server_grads

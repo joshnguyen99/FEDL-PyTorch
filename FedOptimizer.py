@@ -2,7 +2,7 @@ from torch.optim import Optimizer
 
 
 class MySGD(Optimizer):
-    def __init__(self, params, lr=0.01):
+    def __init__(self, params, lr):
         defaults = dict(lr=lr)
         super(MySGD, self).__init__(params, defaults)
 
@@ -35,13 +35,10 @@ class FEDLOptimizer(Optimizer):
         loss = None
         if closure is not None:
             loss = closure
-
         for group in self.param_groups:
             i = 0
             for p in group['params']:
                 p.data = p.data - group['lr'] * \
                          (p.grad.data + group['lr'] * self.server_grads[i] - self.pre_grads[i])
                 i += 1
-
         return loss
-

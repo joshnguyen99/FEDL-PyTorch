@@ -17,8 +17,8 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="cnn", choices=["cnn", "mclr"])
     parser.add_argument("--batch_size", type=int, default=100)
     parser.add_argument("--learning_rate", type=float, default=0.01)
-    parser.add_argument("--num_global_iters", type=int, default=5)
-    parser.add_argument("--local_epochs", type=int, default=5)
+    parser.add_argument("--num_global_iters", type=int, default=200)
+    parser.add_argument("--local_epochs", type=int, default=3)
     parser.add_argument("--optimizer", type=str, default="SGD")
     args = parser.parse_args()
 
