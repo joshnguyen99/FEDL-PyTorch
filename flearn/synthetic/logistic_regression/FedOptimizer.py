@@ -40,5 +40,6 @@ class FEDLOptimizer(Optimizer):
             for p in group['params']:
                 p.data = p.data - group['lr'] * \
                          (p.grad.data + group['eta'] * self.server_grads[i] - self.pre_grads[i])
+                # p.data.add_(-group['lr'], p.grad.data)
                 i += 1
         return loss

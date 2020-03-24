@@ -115,16 +115,19 @@ class ServerAVG(Server):
 
 class ServerFEDL(Server):
     def __init__(self, dataset, model, batch_size, learning_rate, num_glob_iters,
-                 local_epochs, optimizer, num_users=100, eta=0.25):
+                 local_epochs, optimizer, num_users=100, eta=0.25, lamb=0):
         super().__init__(dataset, model, batch_size, learning_rate, num_glob_iters,
                          local_epochs, optimizer, num_users)
 
         # Hyper-learning rate
         self.eta = eta
 
+        # Regularization rate
+        self.lamb = lamb
+
         for i in range(num_users):
             user = UserFEDL(i, dataset, model, batch_size, learning_rate,
-                            local_epochs, optimizer, eta)
+                            local_epochs, optimizer, eta, lamb)
             self.users.append(user)
             self.total_train_samples += user.train_samples
 

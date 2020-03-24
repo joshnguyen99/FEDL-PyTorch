@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 import numpy as np
 import json
 import random
@@ -90,7 +91,7 @@ def save_total_data():
         if not os.path.exists(path):
             os.makedirs(path)
 
-    X, y = generate_logistic_regression_data(100, 5, 40, 0.05)
+    X, y = generate_logistic_regression_data(100, 2, 40, 0.05)
 
     # Create data structure
     train_data = {'users': [], 'user_data': {}, 'num_samples': []}

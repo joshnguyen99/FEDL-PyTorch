@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 from FedServer import ServerAVG, ServerFEDL
 import argparse
 
@@ -16,7 +17,7 @@ if __name__ == "__main__":
                         choices=["mnist", "fashion_mnist", "femnist"])
     parser.add_argument("--model", type=str, default="cnn", choices=["cnn", "mclr"])
     parser.add_argument("--batch_size", type=int, default=100)
-    parser.add_argument("--learning_rate", type=float, default=0.03)
+    parser.add_argument("--learning_rate", type=float, default=0.01)
     parser.add_argument("--num_global_iters", type=int, default=200)
     parser.add_argument("--local_epochs", type=int, default=10)
     parser.add_argument("--optimizer", type=str, default="SGD")

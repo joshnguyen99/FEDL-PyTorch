@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 import argparse
 
 
@@ -21,23 +22,25 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--dataset", type=str, default="mnist",
+    parser.add_argument("--dataset", type=str, default="synthetic_logistic_regression",
                         choices=["mnist", "synthetic_logistic_regression",
                                  "synthetic_linear_regression"])
 
     parser.add_argument("--model", type=str, default="FEDL", choices=["FEDL", "FedAvg"])
 
-    parser.add_argument("--batch_size", type=int, default=100)
+    parser.add_argument("--batch_size", type=int, default=10000000)
 
-    parser.add_argument("--learning_rate", type=float, default=0.01)
+    parser.add_argument("--learning_rate", type=float, default=0.5)
 
     parser.add_argument("--num_global_iters", type=int, default=200)
 
-    parser.add_argument("--local_epochs", type=int, default=10)
+    parser.add_argument("--local_epochs", type=int, default=40)
 
     parser.add_argument("--optimizer", type=str, default="SGD", choices=["SGD", "FEDLOptimizer"])
 
-    parser.add_argument("--eta", type=float, default=0.5, help="Hyper-learning rate")
+    parser.add_argument("--eta", type=float, default=0.1, help="Hyper-learning rate")
+
+    parser.add_argument("--lamb", type=float, default=1, help="Regularization parameter")
 
     args = parser.parse_args()
 
