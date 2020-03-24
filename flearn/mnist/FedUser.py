@@ -38,8 +38,8 @@ class User:
         self.testloader = DataLoader(self.test_data, self.test_samples)
 
     def get_data(self, id="", dataset="mnist"):
-        train_path = os.path.join("data", "userstrain", id + ".json")
-        test_path = os.path.join("data", "userstest", id + ".json")
+        train_path = os.path.join(os.path.dirname(__file__), "data", "userstrain", id + ".json")
+        test_path = os.path.join(os.path.dirname(__file__), "data", "userstest", id + ".json")
         if not os.path.exists(train_path) or not os.path.exists(test_path):
             raise FileNotFoundError("User not detected.")
 
