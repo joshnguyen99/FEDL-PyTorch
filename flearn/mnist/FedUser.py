@@ -4,8 +4,8 @@ import torch.nn.functional as F
 import os
 import json
 from torch.utils.data import DataLoader
-from FedModel import MCLR
-from FedOptimizer import MySGD, FEDLOptimizer
+from .FedModel import MCLR
+from .FedOptimizer import MySGD, FEDLOptimizer
 
 IMAGE_SIZE = 28
 IMAGE_PIXELS = IMAGE_SIZE * IMAGE_SIZE
@@ -38,8 +38,8 @@ class User:
         self.testloader = DataLoader(self.test_data, self.test_samples)
 
     def get_data(self, id="", dataset="mnist"):
-        train_path = os.path.join(os.path.dirname(__file__), "data", "userstrain", id + ".json")
-        test_path = os.path.join(os.path.dirname(__file__), "data", "userstest", id + ".json")
+        train_path = os.path.join("data", "userstrain", id + ".json")
+        test_path = os.path.join("data", "userstest", id + ".json")
         if not os.path.exists(train_path) or not os.path.exists(test_path):
             raise FileNotFoundError("User not detected.")
 
@@ -145,13 +145,20 @@ class UserAVG(User):
 
 class UserFEDL(User):
     def __init__(self, numeric_id, dataset, model, batch_size, learning_rate,
-                 local_epochs, optimizer, eta):
+                 local_epochs, optimizer, eta, lamb):
         super().__init__(numeric_id, dataset, model, batch_size, learning_rate,
                          local_epochs, optimizer)
 
+        self.lamb = lamb
+
         self.eta = eta
 
-        self.pre_grads, self.server_grads = None, None
+        self.pre_grads = [torch.rand(self.model.fc1.weight.shape[0], self.model.fc1.weight.shape[1]),
+                          torch.rand(self.model.fc1.bias.shape)]
+        self.server_grads = [torch.rand(self.model.fc1.weight.shape[0], self.model.fc1.weight.shape[1]),
+                             torch.rand(self.model.fc1.bias.shape)]
+
+        self.loss = self.loss_fn
 
         self.optimizer = FEDLOptimizer(self.model.parameters(),
                                        lr=self.learning_rate,
@@ -166,16 +173,45 @@ class UserFEDL(User):
 
         self.save_previous_grads()
 
+    def loss_fn(self, input, target):
+        """
+        BCE with Logits Loss (reduction=mean), plus L2 regularization.
+        """
+        loss = F.nll_loss(input, target)
+        # Add regularization
+        loss += (self.lamb / 2) * torch.sum(self.model.fc1.weight ** 2)
+        return loss
+
+    def surrogate_fn(self, input, target):
+        """
+        J^t_n(w) = F_n(w) + <eta * \nabla \bar(F) - \nabla F_n(w^{t-1}, w>
+        """
+        surrogate_loss = self.loss_fn(input, target)
+        surrogate_loss += torch.mm((self.eta * self.optimizer.server_grads[0] -
+                                    self.optimizer.pre_grads[0]), self.model.fc1.weight.T).item()
+        return surrogate_loss
+
+    def surrogate_grads(self):
+        """
+        \\nabla J^t_n(w)
+        """
+        grads = self.model.fc1.weight.grad.data.clone()
+        grads += self.eta * self.optimizer.server_grads[0]
+        grads -= self.optimizer.pre_grads[0]
+        return grads
+
+
+
     def set_parameters(self, model):
 
         for old_param, new_param in zip(self.model.parameters(), model.parameters()):
-            old_param = new_param.clone().requires_grad_(True)
-            # old_param.data = new_param.data.clone()
-        self.optimizer = FEDLOptimizer(self.model.parameters(),
-                                       lr=self.learning_rate,
-                                       server_grads=self.server_grads,
-                                       pre_grads=self.pre_grads,
-                                       eta=self.eta)
+            # old_param = new_param.clone().requires_grad_(True)
+            old_param.data = new_param.data.clone()
+        # self.optimizer = FEDLOptimizer(self.model.parameters(),
+        #         #                                lr=self.learning_rate,
+        #         #                                server_grads=self.server_grads,
+        #         #                                pre_grads=self.pre_grads,
+        #         #                                eta=self.eta)
         for old_param, new_param in zip(self.server_model.parameters(), model.parameters()):
             old_param.data = new_param.data.clone()
             old_param.grad = torch.zeros_like(old_param.data)
@@ -187,21 +223,45 @@ class UserFEDL(User):
         server_loss.backward()
         self.save_previous_grads()
 
+    # def train(self, epochs):
+    #     LOSS = 0
+    #     self.model.train()
+    #     for epoch in range(self.local_epochs):
+    #         loss_per_epoch = 0
+    #         for batch_idx, (X, y) in enumerate(self.trainloader):
+    #             self.optimizer.zero_grad()
+    #             output = self.model(X)
+    #             loss = self.loss(output, y)
+    #             # loss += torch.sum(2 * (self.model.fc1.weight ** 2))
+    #             loss.backward()
+    #             self.optimizer.step()
+    #             loss_per_epoch += loss.item() * X.shape[0]
+    #         loss_per_epoch /= self.train_samples
+    #         LOSS += loss_per_epoch
+    #     return LOSS / self.local_epochs
+
     def train(self, epochs):
         LOSS = 0
         self.model.train()
-        for epoch in range(self.local_epochs):
+        previous_surrogate_grads = self.surrogate_grads().norm(2)
+        current_surrogate_grads = self.surrogate_grads().norm(2)
+        i = 0
+        while current_surrogate_grads > 0.8 * previous_surrogate_grads and i < self.local_epochs:
+            i += 1
             loss_per_epoch = 0
             for batch_idx, (X, y) in enumerate(self.trainloader):
                 self.optimizer.zero_grad()
                 output = self.model(X)
                 loss = self.loss(output, y)
+                # loss = self.surrogate_fn(output, y)
                 loss.backward()
                 self.optimizer.step()
                 loss_per_epoch += loss.item() * X.shape[0]
+            current_surrogate_grads = self.surrogate_grads().norm(2)
             loss_per_epoch /= self.train_samples
             LOSS += loss_per_epoch
-        return LOSS / self.local_epochs
+        return LOSS / i
+
 
     def save_previous_grads(self):
         pre_grads = []
