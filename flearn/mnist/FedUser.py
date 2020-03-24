@@ -4,8 +4,8 @@ import torch.nn.functional as F
 import os
 import json
 from torch.utils.data import DataLoader
-from .FedModel import MCLR
-from .FedOptimizer import MySGD, FEDLOptimizer
+from FedModel import MCLR
+from FedOptimizer import MySGD, FEDLOptimizer
 
 IMAGE_SIZE = 28
 IMAGE_PIXELS = IMAGE_SIZE * IMAGE_SIZE
@@ -38,8 +38,8 @@ class User:
         self.testloader = DataLoader(self.test_data, self.test_samples)
 
     def get_data(self, id="", dataset="mnist"):
-        train_path = os.path.join(os.path.dirname(__file__), "datafed", self.dataset, "userstrain", id + ".json")
-        test_path = os.path.join(os.path.dirname(__file__), "datafed", self.dataset, "userstest", id + ".json")
+        train_path = os.path.join("data", "userstrain", id + ".json")
+        test_path = os.path.join("data", "userstest", id + ".json")
         if not os.path.exists(train_path) or not os.path.exists(test_path):
             raise FileNotFoundError("User not detected.")
 
